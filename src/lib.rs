@@ -32,11 +32,11 @@ fn malleable<'a>(_a: (), b: &'a ()) -> &'a () {
 				for<'b> fn(
 					(),
 					&'b (),
-					&(dyn Send + Sync + for<'c> Fn((), &'c ()) -> &'c ()),
+					&(dyn Send + Sync + for<'c> FnOnce((), &'c ()) -> &'c ()),
 				) -> &'b (),
 			>,
 			malleable: for<'b> fn((), &'b ()) -> &'b (),
-		) -> impl Send + Sync + for<'a> Fn((), &'a ()) -> &'a () {
+		) -> impl Send + Sync + for<'a> FnOnce((), &'a ()) -> &'a () {
 			let next = iter.next();
 			let iter = iter;
 			higher_order_closure! {
@@ -55,7 +55,7 @@ fn malleable<'a>(_a: (), b: &'a ()) -> &'a () {
 }
 
 static malleable_detours: HotSocket<
-	for<'a> fn((), &'a (), &(dyn Send + Sync + for<'b> Fn((), &'b ()) -> &'b ())) -> &'a (),
+	for<'a> fn((), &'a (), &(dyn Send + Sync + for<'b> FnOnce((), &'b ()) -> &'b ())) -> &'a (),
 > = HotSocket::new();
 
 pub struct HotSocket<TDetour: 'static> {
