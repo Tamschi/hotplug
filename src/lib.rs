@@ -19,7 +19,7 @@ use tap::Pipe;
 #[doc = include_str!("../README.md")]
 mod readme {}
 
-fn malleable<'a>(_a: (), b: &'a ()) -> &'a () {
+pub fn malleable<'a>(_a: (), b: &'a ()) -> &'a () {
 	let malleable = higher_order_closure! {
 		for<'a> |_a: (), b: &'a ()| -> &'a () {
 			b
@@ -32,21 +32,25 @@ fn malleable<'a>(_a: (), b: &'a ()) -> &'a () {
 				for<'b> fn(
 					(),
 					&'b (),
-					&(dyn Send + Sync + for<'c> FnOnce((), &'c ()) -> &'c ()),
+					&(dyn Send + Sync + for<'c> Fn((), &'c ()) -> &'c ()),
 				) -> &'b (),
 			>,
 			malleable: for<'b> fn((), &'b ()) -> &'b (),
-		) -> impl Send + Sync + for<'a> FnOnce((), &'a ()) -> &'a () {
+		) -> impl Send + Sync + for<'a> Fn((), &'a ()) -> &'a () {
 			let next = iter.next();
 			let iter = iter;
-			higher_order_closure! {
-				for<'a> move |a: (), b: &'a ()| -> &'a () {
-					match &next {
-						None => malleable(a, b),
-						Some(next) => next(a, b, &make_next(iter.clone(), malleable)),
-					}
+			({
+				fn __funnel__<__Closure>(f: __Closure) -> __Closure
+				where
+					__Closure: for<'a> Fn((), &'a ()) -> &'a (),
+				{
+					f
 				}
-			}
+				__funnel__::<_>
+			})(move |a, b| match &next {
+				None => malleable(a, b),
+				Some(next) => next(a, b, &make_next(iter.clone(), malleable)),
+			})
 		}
 
 		let first = make_next(malleable_detours.iter(), malleable);
@@ -54,8 +58,8 @@ fn malleable<'a>(_a: (), b: &'a ()) -> &'a () {
 	}
 }
 
-static malleable_detours: HotSocket<
-	for<'a> fn((), &'a (), &(dyn Send + Sync + for<'b> FnOnce((), &'b ()) -> &'b ())) -> &'a (),
+pub static malleable_detours: HotSocket<
+	for<'a> fn((), &'a (), &(dyn Send + Sync + for<'b> Fn((), &'b ()) -> &'b ())) -> &'a (),
 > = HotSocket::new();
 
 pub struct HotSocket<TDetour: 'static> {
@@ -79,25 +83,28 @@ impl<TDetour> HotSocket<TDetour> {
 		}
 	}
 
-	pub fn add_plug(&self, plug: Box<TDetour>) -> &'static HotPlug<TDetour> {
+	pub fn add_plug(&self, plug: TDetour) -> &'static HotPlug<TDetour> {
 		let new_head = Box::leak(Box::new(HotPlug {
 			next: None,
-			this: *plug,
+			this: plug,
 		}));
 
+		let mut updated = None;
+		let updated_mut = &mut updated;
 		self.head
 			.fetch_update(Ordering::Release, Ordering::Acquire, move |previous| {
 				new_head.next = unsafe {
 					//SAFETY: This is a permanently leaked instance.
 					previous.as_ref()
 				};
-				Some(new_head as *mut _)
+				*updated_mut = Some(new_head as *mut _);
+				*updated_mut
 			})
+			.expect("unreachable");
+		updated
 			.expect("unreachable")
-			.pipe(|ptr| unsafe {
-				//SAFETY: Leaked, and moved into closure above.
-				ptr.as_ref().expect("unreachable")
-			})
+			.pipe(|ptr| unsafe { ptr.as_ref() })
+			.expect("unreachable")
 	}
 
 	#[must_use]
