@@ -12,7 +12,6 @@ use std::{
 	sync::atomic::{AtomicPtr, Ordering},
 };
 
-use higher_order_closure::higher_order_closure;
 use tap::Pipe;
 
 #[cfg(doctest)]
@@ -20,11 +19,7 @@ use tap::Pipe;
 mod readme {}
 
 pub fn malleable<'a>(_a: (), b: &'a ()) -> &'a () {
-	let malleable = higher_order_closure! {
-		for<'a> |_a: (), b: &'a ()| -> &'a () {
-			b
-		}
-	};
+	let malleable: for<'b> fn((), &'b ()) -> &'b () = |_a, b| b;
 
 	{
 		fn make_next(
@@ -38,19 +33,10 @@ pub fn malleable<'a>(_a: (), b: &'a ()) -> &'a () {
 			malleable: for<'b> fn((), &'b ()) -> &'b (),
 		) -> impl Send + Sync + for<'a> Fn((), &'a ()) -> &'a () {
 			let next = iter.next();
-			let iter = iter;
-			({
-				fn __funnel__<__Closure>(f: __Closure) -> __Closure
-				where
-					__Closure: for<'a> Fn((), &'a ()) -> &'a (),
-				{
-					f
-				}
-				__funnel__::<_>
-			})(move |a, b| match &next {
+			move |a, b| match &next {
 				None => malleable(a, b),
 				Some(next) => next(a, b, &make_next(iter.clone(), malleable)),
-			})
+			}
 		}
 
 		let first = make_next(malleable_detours.iter(), malleable);
